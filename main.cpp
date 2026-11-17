@@ -86,6 +86,7 @@ int main()
     // ╔════════════════ 待完成：定义变量 ════════════════╗
     // 如果你需要定义额外变量来实现移动逻辑，就定义在这里
     // ╚════════════════ 定义变量到此为止 ════════════════╝
+    bool visited[GRID_H][GRID_W] = {false}; 
 
     sf::Clock clock;              // 计时器，用来量"每一帧过了多少秒"
 
@@ -149,6 +150,23 @@ int main()
             // ╔════════════════ 待完成：移动代码 ════════════════╗
 
             // ╚════════════════ 移动代码到此为止 ════════════════╝
+
+            constexpr int dir[4][2] = {{0, -1}, {-1, 0}, {1, 0}, {0, 1}};   // 先向左向上，再向下向右，保证不走回头路
+
+            for (int i = 0; i < 4; ++i)
+            {
+                int nextRow = enemyRow + dir[i][0];
+                int nextCol = enemyCol + dir[i][1];
+                if (nextRow >= 0 && nextRow < GRID_H && nextCol >= 0 && nextCol < GRID_W && // 边界检查
+                    (map[nextRow][nextCol] == '#' || map[nextRow][nextCol] == 'E') && // 敌人能走
+                    !visited[nextRow][nextCol]) // 没有走过
+                {
+                    visited[enemyRow][enemyCol] = true; 
+                    enemyRow = nextRow;
+                    enemyCol = nextCol;
+                    break;
+                }
+            }
         }
 
         if (!gameOver)
