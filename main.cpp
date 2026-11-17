@@ -87,6 +87,11 @@ int main()
     // 如果你需要定义额外变量来实现移动逻辑，就定义在这里
     // ╚════════════════ 定义变量到此为止 ════════════════╝
     bool visited[GRID_H][GRID_W] = {false}; 
+    constexpr int dir[4][2] = {{0, -1}, {-1, 0}, {0, 1}, {1, 0}};   // 先向左向上，再向右向下，保证不走回头路
+    bool circled = false; // 转过圈了吗
+    int circleCnt = -1; // 当前转圈次数，-1代表未在转圈
+    int prevDir;
+    constexpr int CIRCLE_TIMES = 3; // 转三圈
 
     sf::Clock clock;              // 计时器，用来量"每一帧过了多少秒"
 
@@ -151,8 +156,41 @@ int main()
 
             // ╚════════════════ 移动代码到此为止 ════════════════╝
 
-            constexpr int dir[4][2] = {{0, -1}, {-1, 0}, {1, 0}, {0, 1}};   // 先向左向上，再向下向右，保证不走回头路
+            // 若未转过圈，判断是否可以转圈：要求左、上、左上三格都可以落脚
+            if (!circled && enemyRow > 0 && enemyCol > 0 
+                && map[enemyRow][enemyCol - 1] == '#' && map[enemyRow - 1][enemyCol] == '#' && map[enemyRow - 1][enemyCol - 1] == '#')
+            {
+                circled = true;
+                circleCnt = 0;
+                prevDir = -1; // 设为-1，这样下一次累加时就可以向左走
+            }
 
+            // 若在转圈，则继续转圈
+            if (circleCnt != -1)
+            {
+                if (prevDir == 3 && circleCnt == CIRCLE_TIMES - 1) // 已转三圈，走到最右下角，这一步向左走跳出转圈状态
+                {
+                    circleCnt = -1;
+                    enemyRow += dir[0][0];
+                    enemyCol += dir[0][1];
+                    continue;
+                }
+                else 
+                {
+                    if (prevDir == 3) // 已走到最右下角，转圈次数+1
+                    {
+                        ++circleCnt;
+                    }
+                    prevDir = (prevDir + 1) % 4;
+                }
+                enemyRow += dir[prevDir][0];
+                enemyCol += dir[prevDir][1];
+
+                continue;
+            }
+
+
+            // 不转圈的情况下，寻路直接向前
             for (int i = 0; i < 4; ++i)
             {
                 int nextRow = enemyRow + dir[i][0];
