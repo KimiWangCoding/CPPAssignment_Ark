@@ -24,6 +24,10 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <utility>
+#include <stack>
+
+#define MODE 3 // 拨到1是T1、T2的代码，拨到3是T3的代码
 
 
 // ---------- 常量（棋盘尺寸等固定配置）----------
@@ -44,6 +48,8 @@ void drawEnemy(sf::RenderWindow& win, bool enemyAlive,
 void drawHud(sf::RenderWindow& win);
 void drawTopStatus(sf::RenderWindow& win, int enemiesTotal, int remainingEnemies, int life);
 void drawGameOver(sf::RenderWindow& win, bool victory);
+
+
 
 // ============================================================
 //  上半部分 · main()：游戏数据 + 你要写的代码
@@ -83,15 +89,31 @@ int main()
     bool  enemyAlive = true;            // 是否还在场上（到终点或被消灭后变 false）
     float stepTimer  = 0.f;             // "走格计时器"：攒时间用，见下面主循环的说明
     const float STEP_TIME = 1.0f;       // 每走一格要花几秒（调大走得慢、调小走得快）
+ 
     // ╔════════════════ 待完成：定义变量 ════════════════╗
     // 如果你需要定义额外变量来实现移动逻辑，就定义在这里
-    // ╚════════════════ 定义变量到此为止 ════════════════╝
+
+    /// ====自定义变量====
+    // T1, T2, T3通用变量
     bool visited[GRID_H][GRID_W] = {false}; 
     constexpr int dir[4][2] = {{0, -1}, {-1, 0}, {0, 1}, {1, 0}};   // 先向左向上，再向右向下，保证不走回头路
+
+    #if MODE == 1
+    // 关于转圈的变量
     bool circled = false; // 转过圈了吗
     int circleCnt = -1; // 当前转圈次数，-1代表未在转圈
     int prevDir;
     constexpr int CIRCLE_TIMES = 3; // 转三圈
+    #endif
+
+    #if MODE == 3
+    // 关于T3遍历的变量
+    std::stack<std::pair<int, int>> pathStack; // 由于只允许修改main函数，我们用栈来模拟DFS的递归
+    pathStack.push({enemyRow, enemyCol}); // 初始位置入栈
+    int prevRow = -1, prevCol = -1; // 上一步的位置（遍历完要回来）
+    #endif
+
+    // ╚════════════════ 定义变量到此为止 ════════════════╝
 
     sf::Clock clock;              // 计时器，用来量"每一帧过了多少秒"
 
@@ -154,7 +176,7 @@ int main()
         {
             // ╔════════════════ 待完成：移动代码 ════════════════╗
 
-            // ╚════════════════ 移动代码到此为止 ════════════════╝
+            #if MODE == 1
 
             // 若未转过圈，判断是否可以转圈：要求左、上、左上三格都可以落脚
             if (!circled && enemyRow > 0 && enemyCol > 0 
@@ -205,6 +227,47 @@ int main()
                     break;
                 }
             }
+
+            #endif
+
+            #if MODE == 3
+
+            // 我们通过DFS的方式遍历每一个可以走到的格子
+
+            // 出栈：栈顶的元素就是这一步应当走到的格子
+            if (!pathStack.empty())
+            {
+                auto current = pathStack.top();
+                pathStack.pop();
+                enemyRow = current.first;
+                enemyCol = current.second;
+                prevRow = enemyRow;
+                prevCol = enemyCol;
+                visited[enemyRow][enemyCol] = true; // 标记为已走过
+            }
+
+            // 回溯：遍历完所有的邻居就回退到上一步
+            if (prevRow != -1 && prevCol != -1)
+            {
+                pathStack.push({prevRow, prevCol});
+            }
+
+            for (int i = 0; i < 4; ++i)
+            {
+                int nextRow = enemyRow + dir[i][0];
+                int nextCol = enemyCol + dir[i][1];
+                if (nextRow >= 0 && nextRow < GRID_H && nextCol >= 0 && nextCol < GRID_W && // 边界检查
+                    (map[nextRow][nextCol] == '#' || map[nextRow][nextCol] == 'E') && // 敌人能走
+                    !visited[nextRow][nextCol]) // 没有走过
+                {
+                    pathStack.push({nextRow, nextCol}); 
+                }
+            }
+
+            #endif
+
+
+            // ╚════════════════ 移动代码到此为止 ════════════════╝
         }
 
         if (!gameOver)
