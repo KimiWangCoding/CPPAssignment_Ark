@@ -25,15 +25,12 @@
 #include <string>
 #include <iostream>
 #include <utility>
-#include <stack>
+#include <algorithm>
+#include <queue>
 
-#define MODE 3 // 拨到1是T1、T2的代码，拨到3是T3的代码
 
 
 // ---------- 常量（棋盘尺寸等固定配置）----------
-constexpr int GRID_W = 9;    // 地图列数（对应关卡图）
-constexpr int GRID_H = 4;    // 地图行数
-
 // 棋盘显示尺寸：保持关卡图 16:9 的比例，避免背景图被拉伸变形。
 constexpr int BOARD_W = 800;
 constexpr int BOARD_H = 450;
@@ -43,7 +40,7 @@ constexpr int HUD_W = 200;   // 右侧信息栏宽度
 
 void loadAssets();
 void drawMap(sf::RenderWindow& win, const std::vector<std::string>& map);
-void drawEnemy(sf::RenderWindow& win, bool enemyAlive,
+void drawEnemy(sf::RenderWindow& win, const std::vector<std::string>& map, bool enemyAlive,
                int enemyRow, int enemyCol, float stepTimer, float STEP_TIME);
 void drawHud(sf::RenderWindow& win);
 void drawTopStatus(sf::RenderWindow& win, int enemiesTotal, int remainingEnemies, int life);
@@ -85,7 +82,7 @@ int main()
     bool victory  = false;        // 结束时的结果：true=胜利, false=失败
 
     // 敌人（源石虫）：M1 全场只有这一个敌人
-    int   enemyRow = 2, enemyCol = 8;   // 敌人现在站在第几行、第几列（出生在出怪口 S）
+    int   enemyRow = 0, enemyCol = 0;   // 初始化时从地图找到出怪口 S
     bool  enemyAlive = true;            // 是否还在场上（到终点或被消灭后变 false）
     float stepTimer  = 0.f;             // "走格计时器"：攒时间用，见下面主循环的说明
     const float STEP_TIME = 1.0f;       // 每走一格要花几秒（调大走得慢、调小走得快）
@@ -93,25 +90,72 @@ int main()
     // ╔════════════════ 待完成：定义变量 ════════════════╗
     // 如果你需要定义额外变量来实现移动逻辑，就定义在这里
 
-    /// ====自定义变量====
-    // T1, T2, T3通用变量
-    bool visited[GRID_H][GRID_W] = {false}; 
-    constexpr int dir[4][2] = {{0, -1}, {-1, 0}, {0, 1}, {1, 0}};   // 先向左向上，再向右向下，保证不走回头路
+    const int C_BaseDamage = 1; // 源石虫进蓝门一次扣多少生命
+    using Cell = std::pair<int, int>;
+    const auto FindShortestPath = [](const std::vector<std::string>& levelMap) -> std::vector<Cell>
+    {
+        // 一张图有一个 S 和一个 E。每行单独检查长度，地图尺寸由内容决定。
+        const Cell C_Unvisited = {-1, -1};
+        Cell start = C_Unvisited, goal = C_Unvisited;
+        std::vector<std::vector<Cell>> previous;
+        for (int row = 0; row < int(levelMap.size()); ++row)
+        {
+            previous.emplace_back(levelMap[row].size(), C_Unvisited);
+            for (int col = 0; col < int(levelMap[row].size()); ++col)
+            {
+                if (levelMap[row][col] == 'S') start = {row, col};
+                if (levelMap[row][col] == 'E') goal = {row, col};
+            }
+        }
+        if (start == C_Unvisited || goal == C_Unvisited) return {};
 
-    #if MODE == 1
-    // 关于转圈的变量
-    bool circled = false; // 转过圈了吗
-    int circleCnt = -1; // 当前转圈次数，-1代表未在转圈
-    int prevDir;
-    constexpr int CIRCLE_TIMES = 3; // 转三圈
-    #endif
+        // 每次向外扩一格。入队时记下上一格，既防止重复入队，也能用来还原路线。
+        constexpr int C_Directions[4][2] = {{0, -1}, {-1, 0}, {0, 1}, {1, 0}};
+        std::queue<Cell> pending;
+        previous[start.first][start.second] = start;
+        pending.push(start);
+        while (!pending.empty())
+        {
+            const auto [row, col] = pending.front();
+            pending.pop();
+            if (Cell{row, col} == goal) break;
 
-    #if MODE == 3
-    // 关于T3遍历的变量
-    std::stack<std::pair<int, int>> pathStack; // 由于只允许修改main函数，我们用栈来模拟DFS的递归
-    pathStack.push({enemyRow, enemyCol}); // 初始位置入栈
-    int prevRow = -1, prevCol = -1; // 上一步的位置（遍历完要回来）
-    #endif
+            for (const auto& direction : C_Directions)
+            {
+                const int nextRow = row + direction[0];
+                const int nextCol = col + direction[1];
+                if (nextRow < 0 || nextRow >= int(levelMap.size()) ||
+                    nextCol < 0 || nextCol >= int(levelMap[nextRow].size())) continue;
+                const char tile = levelMap[nextRow][nextCol];
+                if ((tile != '#' && tile != 'E') ||
+                    previous[nextRow][nextCol] != C_Unvisited) continue;
+                previous[nextRow][nextCol] = {row, col};
+                pending.emplace(nextRow, nextCol);
+            }
+        }
+        if (previous[goal.first][goal.second] == C_Unvisited) return {};
+
+        // 从 E 沿上一格倒推到 S，再反转成实际行走顺序。
+        std::vector<Cell> path;
+        for (Cell cell = goal; cell != start; cell = previous[cell.first][cell.second])
+            path.push_back(cell);
+        path.push_back(start);
+        std::reverse(path.begin(), path.end());
+        return path;
+    };
+
+    const auto path = FindShortestPath(map);
+    std::size_t nextStep = 1; // 路线第 0 格就是出生点
+    if (path.empty())
+    {
+        enemyAlive = false;
+        std::cerr << "No route from S to E.\n";
+    }
+    else
+    {
+        enemyRow = path.front().first;
+        enemyCol = path.front().second;
+    }
 
     // ╚════════════════ 定义变量到此为止 ════════════════╝
 
@@ -163,10 +207,10 @@ int main()
         if (shouldMove)
         {
             stepTimer -= STEP_TIME;
-            if (enemyRow == 1 && enemyCol == 0)          // 已在终点 E（本图 E 在 (1,0)）→ 溜进蓝门
+            if (nextStep == path.size()) // 最后一格的滑行动画已经播完 → 溜进蓝门
             {
                 enemyAlive = false;
-                --life;
+                life = std::max(0, life - C_BaseDamage);
                 --remainingEnemies;
                 shouldMove = false;
             }
@@ -175,98 +219,9 @@ int main()
         if (shouldMove) // 进行移动
         {
             // ╔════════════════ 待完成：移动代码 ════════════════╗
-
-            #if MODE == 1
-
-            // 若未转过圈，判断是否可以转圈：要求左、上、左上三格都可以落脚
-            if (!circled && enemyRow > 0 && enemyCol > 0 
-                && map[enemyRow][enemyCol - 1] == '#' && map[enemyRow - 1][enemyCol] == '#' && map[enemyRow - 1][enemyCol - 1] == '#')
-            {
-                circled = true;
-                circleCnt = 0;
-                prevDir = -1; // 设为-1，这样下一次累加时就可以向左走
-            }
-
-            // 若在转圈，则继续转圈
-            if (circleCnt != -1)
-            {
-                if (prevDir == 3 && circleCnt == CIRCLE_TIMES - 1) // 已转三圈，走到最右下角，这一步向左走跳出转圈状态
-                {
-                    circleCnt = -1;
-                    enemyRow += dir[0][0];
-                    enemyCol += dir[0][1];
-                    continue;
-                }
-                else 
-                {
-                    if (prevDir == 3) // 已走到最右下角，转圈次数+1
-                    {
-                        ++circleCnt;
-                    }
-                    prevDir = (prevDir + 1) % 4;
-                }
-                enemyRow += dir[prevDir][0];
-                enemyCol += dir[prevDir][1];
-
-                continue;
-            }
-
-
-            // 不转圈的情况下，寻路直接向前
-            for (int i = 0; i < 4; ++i)
-            {
-                int nextRow = enemyRow + dir[i][0];
-                int nextCol = enemyCol + dir[i][1];
-                if (nextRow >= 0 && nextRow < GRID_H && nextCol >= 0 && nextCol < GRID_W && // 边界检查
-                    (map[nextRow][nextCol] == '#' || map[nextRow][nextCol] == 'E') && // 敌人能走
-                    !visited[nextRow][nextCol]) // 没有走过
-                {
-                    visited[enemyRow][enemyCol] = true; 
-                    enemyRow = nextRow;
-                    enemyCol = nextCol;
-                    break;
-                }
-            }
-
-            #endif
-
-            #if MODE == 3
-
-            // 我们通过DFS的方式遍历每一个可以走到的格子
-
-            // 出栈：栈顶的元素就是这一步应当走到的格子
-            if (!pathStack.empty())
-            {
-                auto current = pathStack.top();
-                pathStack.pop();
-                enemyRow = current.first;
-                enemyCol = current.second;
-                prevRow = enemyRow;
-                prevCol = enemyCol;
-                visited[enemyRow][enemyCol] = true; // 标记为已走过
-            }
-
-            // 回溯：遍历完所有的邻居就回退到上一步
-            if (prevRow != -1 && prevCol != -1)
-            {
-                pathStack.push({prevRow, prevCol});
-            }
-
-            for (int i = 0; i < 4; ++i)
-            {
-                int nextRow = enemyRow + dir[i][0];
-                int nextCol = enemyCol + dir[i][1];
-                if (nextRow >= 0 && nextRow < GRID_H && nextCol >= 0 && nextCol < GRID_W && // 边界检查
-                    (map[nextRow][nextCol] == '#' || map[nextRow][nextCol] == 'E') && // 敌人能走
-                    !visited[nextRow][nextCol]) // 没有走过
-                {
-                    pathStack.push({nextRow, nextCol}); 
-                }
-            }
-
-            #endif
-
-
+            enemyRow = path[nextStep].first;
+            enemyCol = path[nextStep].second;
+            ++nextStep;
             // ╚════════════════ 移动代码到此为止 ════════════════╝
         }
 
@@ -280,7 +235,7 @@ int main()
         // ③ 重画整个画面（引擎）：清屏 → 按当前数据画地图/敌人/文字 → 显示
         window.clear(sf::Color(0, 0, 40));
         drawMap(window, map);
-        drawEnemy(window, enemyAlive, enemyRow, enemyCol, stepTimer, STEP_TIME);
+        drawEnemy(window, map, enemyAlive, enemyRow, enemyCol, stepTimer, STEP_TIME);
         drawTopStatus(window, enemiesTotal, remainingEnemies, life);
         drawHud(window);
         if (gameOver) drawGameOver(window, victory);
@@ -298,9 +253,15 @@ int main()
 //  照着画一遍而已。你不需要读懂，只要在 main() 里改数据，画面就会跟着变。
 // ============================================================
 
-// 每格的像素尺寸（非正方形没关系：关卡图是透视图，逻辑格对上大致位置即可）。
-constexpr float CELL_W = float(BOARD_W) / GRID_W;   // ≈ 88.9
-constexpr float CELL_H = float(BOARD_H) / GRID_H;   // = 112.5
+// 按地图的实际行数和最长一行算格子尺寸，地图和敌人都用同一套坐标。
+sf::Vector2f GetCellSize(const std::vector<std::string>& map)
+{
+    std::size_t cols = 1;
+    for (const auto& row : map)
+        cols = std::max(cols, row.size());
+    return {float(BOARD_W) / float(cols),
+            float(BOARD_H) / float(std::max(map.size(), std::size_t{1}))};
+}
 
 // 背景图裁剪：关卡图是透视渲染，真正能走的地板只占画面中间那块（四周是管道/箱子等装饰）。
 // drawMap 先按下面这个框只取「地板那块」，再拉伸铺满棋盘，让 9×4 网格落在地板上。
@@ -309,9 +270,9 @@ constexpr int MAP_CROP_X = 137, MAP_CROP_Y = 135;   // 裁剪框左上角（像�
 constexpr int MAP_CROP_W = 955, MAP_CROP_H = 393;   // 裁剪框宽、高
 
 // 小工具：格子(行,列) → 该格中心的像素坐标（画图时用来把东西摆到格子正中）。
-sf::Vector2f cellCenter(int row, int col)
+sf::Vector2f cellCenter(int row, int col, sf::Vector2f cellSize)
 {
-    return sf::Vector2f((col + 0.5f) * CELL_W, (row + 0.5f) * CELL_H);
+    return sf::Vector2f((col + 0.5f) * cellSize.x, (row + 0.5f) * cellSize.y);
 }
 
 // ---------- 资源（图片/字体，加载一次，画图函数内部用）----------
@@ -388,11 +349,12 @@ void drawMap(sf::RenderWindow& win, const std::vector<std::string>& map)
     }
 
     // 第 2 层：真实逻辑网格——这才是游戏坐标的准绳，敌人就落在这套格子上。
-    for (int r = 0; r < GRID_H; ++r)
-        for (int c = 0; c < GRID_W; ++c)
+    const auto cellSize = GetCellSize(map);
+    for (int r = 0; r < int(map.size()); ++r)
+        for (int c = 0; c < int(map[r].size()); ++c)
         {
-            sf::RectangleShape cell(sf::Vector2f(CELL_W, CELL_H));
-            cell.setPosition(sf::Vector2f(c * CELL_W, r * CELL_H));
+            sf::RectangleShape cell(cellSize);
+            cell.setPosition(sf::Vector2f(c * cellSize.x, r * cellSize.y));
             cell.setFillColor(tileOverlayColor(map[r][c]));
             cell.setOutlineThickness(-1.f);                    // 向内 1px 边框
             cell.setOutlineColor(sf::Color(255, 255, 255, 50));
@@ -401,7 +363,7 @@ void drawMap(sf::RenderWindow& win, const std::vector<std::string>& map)
 }
 
 // 画敌人：位置完全由传进来的 enemyRow/enemyCol 决定——你在 main 里改这俩，敌人就动。
-void drawEnemy(sf::RenderWindow& win, bool enemyAlive,
+void drawEnemy(sf::RenderWindow& win, const std::vector<std::string>& map, bool enemyAlive,
                int enemyRow, int enemyCol, float stepTimer, float STEP_TIME)
 {
     if (!enemyAlive) return;
@@ -419,15 +381,16 @@ void drawEnemy(sf::RenderWindow& win, bool enemyAlive,
     }
     float t = stepTimer / STEP_TIME;                 // 本格已走过的比例 0→1
     if (t > 1.f) t = 1.f;                            // 防御性夹取
-    sf::Vector2f a = cellCenter(fromR, fromC);
-    sf::Vector2f b = cellCenter(toR,   toC);
+    const auto cellSize = GetCellSize(map);
+    sf::Vector2f a = cellCenter(fromR, fromC, cellSize);
+    sf::Vector2f b = cellCenter(toR, toC, cellSize);
     sf::Vector2f center = a + (b - a) * t;           // 插值出的像素位置
 
     if (hasSlugTex)
     {
         sf::Sprite slug(slugTex);
         sf::Vector2u ts = slugTex.getSize();
-        float scale = (CELL_W * 0.95f) / float(ts.x);
+        float scale = (cellSize.x * 0.95f) / float(ts.x);
         slug.setScale(sf::Vector2f(scale, scale));
         slug.setOrigin(slug.getLocalBounds().size / 2.f);
         slug.setPosition(center);
@@ -435,7 +398,7 @@ void drawEnemy(sf::RenderWindow& win, bool enemyAlive,
     }
     else
     {
-        float radius = CELL_H * 0.3f;                // 兜底：没贴图就画红圆点
+        float radius = cellSize.y * 0.3f;            // 兜底：没贴图就画红圆点
         sf::CircleShape body(radius);
         body.setOrigin(sf::Vector2f(radius, radius));
         body.setFillColor(sf::Color(220, 60, 60));
